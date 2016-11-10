@@ -54,6 +54,10 @@ type Session struct {
 	//beforeSQLExec func(string, ...interface{})
 	lastSQL     string
 	lastSQLArgs []interface{}
+
+	savePointID      string
+	savePointEnabled bool
+	nested           bool
 }
 
 // Clone copy all the session's content and return a new session.
@@ -380,78 +384,112 @@ func (session *Session) Conds() builder.Cond {
 
 // Begin a transaction
 func (session *Session) Begin() error {
-	if session.IsAutoCommit {
-		tx, err := session.DB().Begin()
-		if err != nil {
-			return err
+	if session.Tx != nil {
+		session.nested = true
+		if session.Engine.DriverName() == "postgres" {
+			session.savePointID = NewV1().String()
+			if _, e := session.Tx.Exec("SAVEPOINT ?", session.savePointID); e != nil {
+				return e
+			}
 		}
 		session.IsAutoCommit = false
 		session.IsCommitedOrRollbacked = false
-		session.Tx = tx
-		session.saveLastSQL("BEGIN TRANSACTION")
+	} else {
+		if session.IsAutoCommit {
+			tx, err := session.DB().Begin()
+			if err != nil {
+				return err
+			}
+
+			session.IsAutoCommit = false
+			session.IsCommitedOrRollbacked = false
+			session.Tx = tx
+			session.saveLastSQL("BEGIN TRANSACTION")
+		}
 	}
 	return nil
 }
 
 // Rollback When using transaction, you can rollback if any error
 func (session *Session) Rollback() error {
+	if session.Tx == nil {
+		return nil
+	}
+
 	if !session.IsAutoCommit && !session.IsCommitedOrRollbacked {
-		session.saveLastSQL(session.Engine.dialect.RollBackStr())
-		session.IsCommitedOrRollbacked = true
-		return session.Tx.Rollback()
+		if session.Engine.DriverName() == "postgres" && session.savePointID != "" {
+			if _, e := session.Tx.Exec("ROLLBACK TO SAVEPOINT ?", session.savePointID); e != nil {
+				return e
+			}
+		} else if !session.nested {
+			session.saveLastSQL(session.Engine.dialect.RollBackStr())
+			session.IsCommitedOrRollbacked = true
+			return session.Tx.Rollback()
+		}
 	}
 	return nil
 }
 
 // Commit When using transaction, Commit will commit all operations.
 func (session *Session) Commit() error {
+	if session.Tx == nil {
+		return ErrNotInTransaction
+	}
+
 	if !session.IsAutoCommit && !session.IsCommitedOrRollbacked {
-		session.saveLastSQL("COMMIT")
-		session.IsCommitedOrRollbacked = true
-		var err error
-		if err = session.Tx.Commit(); err == nil {
-			// handle processors after tx committed
+		if session.Engine.DriverName() == "postgres" && session.savePointID != "" {
+			if _, e := session.Tx.Exec("ROLLBACK TO SAVEPOINT ?", session.savePointID); e != nil {
+				return e
+			}
+		} else if !session.nested {
+			session.saveLastSQL("COMMIT")
+			session.IsCommitedOrRollbacked = true
+			var err error
+			if err = session.Tx.Commit(); err == nil {
+				// handle processors after tx committed
 
-			closureCallFunc := func(closuresPtr *[]func(interface{}), bean interface{}) {
+				closureCallFunc := func(closuresPtr *[]func(interface{}), bean interface{}) {
 
-				if closuresPtr != nil {
-					for _, closure := range *closuresPtr {
-						closure(bean)
+					if closuresPtr != nil {
+						for _, closure := range *closuresPtr {
+							closure(bean)
+						}
 					}
 				}
-			}
 
-			for bean, closuresPtr := range session.afterInsertBeans {
-				closureCallFunc(closuresPtr, bean)
+				for bean, closuresPtr := range session.afterInsertBeans {
+					closureCallFunc(closuresPtr, bean)
 
-				if processor, ok := interface{}(bean).(AfterInsertProcessor); ok {
-					processor.AfterInsert()
+					if processor, ok := interface{}(bean).(AfterInsertProcessor); ok {
+						processor.AfterInsert()
+					}
 				}
-			}
-			for bean, closuresPtr := range session.afterUpdateBeans {
-				closureCallFunc(closuresPtr, bean)
+				for bean, closuresPtr := range session.afterUpdateBeans {
+					closureCallFunc(closuresPtr, bean)
 
-				if processor, ok := interface{}(bean).(AfterUpdateProcessor); ok {
-					processor.AfterUpdate()
+					if processor, ok := interface{}(bean).(AfterUpdateProcessor); ok {
+						processor.AfterUpdate()
+					}
 				}
-			}
-			for bean, closuresPtr := range session.afterDeleteBeans {
-				closureCallFunc(closuresPtr, bean)
+				for bean, closuresPtr := range session.afterDeleteBeans {
+					closureCallFunc(closuresPtr, bean)
 
-				if processor, ok := interface{}(bean).(AfterDeleteProcessor); ok {
-					processor.AfterDelete()
+					if processor, ok := interface{}(bean).(AfterDeleteProcessor); ok {
+						processor.AfterDelete()
+					}
 				}
-			}
-			cleanUpFunc := func(slices *map[interface{}]*[]func(interface{})) {
-				if len(*slices) > 0 {
-					*slices = make(map[interface{}]*[]func(interface{}), 0)
+				cleanUpFunc := func(slices *map[interface{}]*[]func(interface{})) {
+					if len(*slices) > 0 {
+						*slices = make(map[interface{}]*[]func(interface{}), 0)
+					}
 				}
+				cleanUpFunc(&session.afterInsertBeans)
+				cleanUpFunc(&session.afterUpdateBeans)
+				cleanUpFunc(&session.afterDeleteBeans)
 			}
-			cleanUpFunc(&session.afterInsertBeans)
-			cleanUpFunc(&session.afterUpdateBeans)
-			cleanUpFunc(&session.afterDeleteBeans)
+			return err
 		}
-		return err
+
 	}
 	return nil
 }
