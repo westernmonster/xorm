@@ -19,25 +19,24 @@ type User struct {
 	Updated time.Time `xorm:"updated"`
 }
 
-type UserRepo struct {
-	session *xorm.Session
+type UserRepo struct{}
+
+func NewUserRepo() *UserRepo {
+	return &UserRepo{}
 }
 
-func NewUserRepo(ses xorm.Session) *UserRepo {
-	return &UserRepo{session: &ses}
-}
-
-func (p *UserRepo) CreateUser(user *User) error {
-	if e := p.session.Begin(); e != nil {
+func (p *UserRepo) CreateUser(ses xorm.Session, user *User) error {
+	var session = &ses
+	if e := session.Begin(); e != nil {
 		return e
 	}
 
-	if _, e := p.session.Insert(user); e != nil {
-		p.session.Rollback()
+	if _, e := session.Insert(user); e != nil {
+		session.Rollback()
 		return e
 	}
 
-	if e := p.session.Commit(); e != nil {
+	if e := session.Commit(); e != nil {
 		return e
 	}
 
@@ -51,25 +50,24 @@ type Tag struct {
 	Updated time.Time `xorm:"updated"`
 }
 
-type TagRepo struct {
-	session *xorm.Session
-}
+type TagRepo struct{}
 
 func NewTagRepo(ses xorm.Session) *TagRepo {
-	return &TagRepo{session: &ses}
+	return &TagRepo{}
 }
 
-func (p *TagRepo) CreateTag(tag *Tag) error {
-	if e := p.session.Begin(); e != nil {
+func (p *TagRepo) CreateTag(ses xorm.Session, tag *Tag) error {
+	var session = &ses
+	if e := session.Begin(); e != nil {
 		return e
 	}
 
-	if _, e := p.session.Insert(tag); e != nil {
-		p.session.Rollback()
+	if _, e := session.Insert(tag); e != nil {
+		session.Rollback()
 		return e
 	}
 
-	if e := p.session.Commit(); e != nil {
+	if e := session.Commit(); e != nil {
 		return e
 	}
 
@@ -86,29 +84,28 @@ func main() {
 	session := engine.NewSession()
 
 	user := &User{
-		Id:   2,
+		Id:   3,
 		Name: "test2",
 	}
 
 	tag := &Tag{
-		Id:   2,
+		Id:   3,
 		Name: "test2",
 	}
+
+	repoUser := new(UserRepo)
+	repoTag := new(TagRepo)
 
 	if e := session.Begin(); e != nil {
 		panic(e)
 	}
 
-	// 需要在Begin后调用初始化
-	repoUser := NewUserRepo(*session)
-	repoTag := NewTagRepo(*session)
-
-	if e := repoUser.CreateUser(user); e != nil {
+	if e := repoUser.CreateUser(*session, user); e != nil {
 		session.Rollback()
 		return
 	}
 
-	if e := repoTag.CreateTag(tag); e != nil {
+	if e := repoTag.CreateTag(*session, tag); e != nil {
 		session.Rollback()
 		return
 	}
