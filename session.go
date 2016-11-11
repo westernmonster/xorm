@@ -16,7 +16,9 @@ import (
 	"strings"
 	"time"
 
+	// log "github.com/cihub/seelog"
 	"github.com/go-xorm/builder"
+	"github.com/rs/xid"
 	"github.com/xormplus/core"
 )
 
@@ -387,8 +389,8 @@ func (session *Session) Begin() error {
 	if session.Tx != nil {
 		session.nested = true
 		if session.Engine.DriverName() == "postgres" {
-			session.savePointID = NewV1().String()
-			if _, e := session.Tx.Exec("SAVEPOINT ?", session.savePointID); e != nil {
+			session.savePointID = xid.New().String()
+			if _, e := session.Tx.Exec("SAVEPOINT " + session.savePointID); e != nil {
 				return e
 			}
 		}
@@ -418,7 +420,7 @@ func (session *Session) Rollback() error {
 
 	if !session.IsAutoCommit && !session.IsCommitedOrRollbacked {
 		if session.Engine.DriverName() == "postgres" && session.savePointID != "" {
-			if _, e := session.Tx.Exec("ROLLBACK TO SAVEPOINT ?", session.savePointID); e != nil {
+			if _, e := session.Tx.Exec("ROLLBACK TO SAVEPOINT " + session.savePointID + ";"); e != nil {
 				return e
 			}
 		} else if !session.nested {
@@ -437,11 +439,7 @@ func (session *Session) Commit() error {
 	}
 
 	if !session.IsAutoCommit && !session.IsCommitedOrRollbacked {
-		if session.Engine.DriverName() == "postgres" && session.savePointID != "" {
-			if _, e := session.Tx.Exec("ROLLBACK TO SAVEPOINT ?", session.savePointID); e != nil {
-				return e
-			}
-		} else if !session.nested {
+		if !session.nested {
 			session.saveLastSQL("COMMIT")
 			session.IsCommitedOrRollbacked = true
 			var err error
