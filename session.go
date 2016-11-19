@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	// log "github.com/cihub/seelog"
 	"github.com/go-xorm/builder"
 	"github.com/rs/xid"
 	"github.com/xormplus/core"
@@ -1265,6 +1264,7 @@ func (session *Session) noCacheFind(sliceValue reflect.Value, sqlStr string, arg
 	var err error
 
 	session.queryPreprocess(&sqlStr, args...)
+
 	if session.IsAutoCommit {
 		_, rawRows, err = session.innerQuery(sqlStr, args...)
 	} else {

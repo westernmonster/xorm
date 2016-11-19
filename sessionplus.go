@@ -388,6 +388,7 @@ func (session *Session) SqlTemplateClient(sqlTagName string, args ...interface{}
 	if session.Engine.sqlTemplate.Template[sqlTagName] == nil {
 		return session.Sql("", &map1)
 	}
+
 	sql, err := session.Engine.sqlTemplate.Template[sqlTagName].Execute(map1)
 	if err != nil {
 		session.Engine.logger.Error(err)
